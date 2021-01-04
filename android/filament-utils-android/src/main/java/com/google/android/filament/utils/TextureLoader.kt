@@ -22,15 +22,86 @@ import android.graphics.BitmapFactory
 import com.google.android.filament.Engine
 import com.google.android.filament.Texture
 import com.google.android.filament.android.TextureHelper
-import java.lang.IllegalArgumentException
+import java.io.File
 import java.nio.ByteBuffer
 
-const val SKIP_BITMAP_COPY = true
+const val SKIP_BITMAP_COPY = false
 
 enum class TextureType {
     COLOR,
     NORMAL,
     DATA
+}
+
+fun loadTextureFromDiskByFile(engine: Engine, textureFile: File, type: TextureType): Texture? {
+    if (textureFile.exists()){
+        val options = BitmapFactory.Options()
+        // Color is the only type of texture we want to pre-multiply with the alpha channel
+        // Pre-multiplication is the default behavior, so we need to turn it off here
+        options.inPremultiplied = type == TextureType.COLOR
+        val textureBitmap = BitmapFactory.decodeFile(textureFile.getAbsolutePath())
+
+        val texture = Texture.Builder()
+                .width(textureBitmap.width)
+                .height(textureBitmap.height)
+                .sampler(Texture.Sampler.SAMPLER_2D)
+                .format(internalFormat(type))
+                // This tells Filament to figure out the number of mip levels
+                .levels(0xff)
+                .build(engine)
+
+        val buffer = ByteBuffer.allocateDirect(textureBitmap.byteCount)
+        textureBitmap.copyPixelsToBuffer(buffer)
+        // Do not forget to rewind the buffer!
+        buffer.flip()
+
+        val descriptor = Texture.PixelBufferDescriptor(
+                buffer,
+                format(textureBitmap),
+                type(textureBitmap))
+
+        texture.setImage(engine, 0, descriptor)
+        texture.generateMipmaps(engine)
+
+        return texture
+    }
+    return null
+}
+
+fun loadTextureFromDiskByURL(engine: Engine, imagePath: String, type: TextureType): Texture? {
+    val textureFile = File(imagePath)
+    if (textureFile.exists()){
+        val options = BitmapFactory.Options()
+        // Color is the only type of texture we want to pre-multiply with the alpha channel
+        // Pre-multiplication is the default behavior, so we need to turn it off here
+        options.inPremultiplied = type == TextureType.COLOR
+        val textureBitmap = BitmapFactory.decodeFile(textureFile.getAbsolutePath())
+
+        val texture = Texture.Builder()
+                .width(textureBitmap.width)
+                .height(textureBitmap.height)
+                .sampler(Texture.Sampler.SAMPLER_2D)
+                .format(internalFormat(type))
+                // This tells Filament to figure out the number of mip levels
+                .levels(0xff)
+                .build(engine)
+
+        val buffer = ByteBuffer.allocateDirect(textureBitmap.byteCount)
+        textureBitmap.copyPixelsToBuffer(buffer)
+        // Do not forget to rewind the buffer!
+        buffer.flip()
+
+        val descriptor = Texture.PixelBufferDescriptor(
+                buffer,
+                format(textureBitmap),
+                type(textureBitmap))
+
+        texture.setImage(engine, 0, descriptor)
+        texture.generateMipmaps(engine)
+
+        return texture
+    }
+    return null
 }
 
 fun loadTexture(engine: Engine, resources: Resources, resourceId: Int, type: TextureType): Texture {

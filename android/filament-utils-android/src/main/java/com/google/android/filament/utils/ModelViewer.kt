@@ -78,12 +78,12 @@ class ModelViewer(val engine: Engine) : android.view.View.OnTouchListener {
     val camera: Camera
     @Entity val light: Int
 
-    private val uiHelper: UiHelper = UiHelper(UiHelper.ContextErrorPolicy.DONT_CHECK)
+    val uiHelper: UiHelper = UiHelper(UiHelper.ContextErrorPolicy.DONT_CHECK)
     private lateinit var displayHelper: DisplayHelper
-    private lateinit var cameraManipulator: Manipulator
-    private lateinit var gestureDetector: GestureDetector
+
     private var surfaceView: SurfaceView? = null
     private var textureView: TextureView? = null
+    private var loadingStatusListener: ResourceLoadingStatusListener? = null
 
     private var fetchResourcesJob: Job? = null
 
@@ -97,6 +97,11 @@ class ModelViewer(val engine: Engine) : android.view.View.OnTouchListener {
     private val target = DoubleArray(3)
     private val upward = DoubleArray(3)
 
+    val cameraController = CameraController()
+    private val kCameraFovDirection = Camera.Fov.VERTICAL
+    private val kModelRatio = 1.0f
+    private val kHeadRatio = 1.0f
+
     init {
         renderer = engine.createRenderer()
         scene = engine.createScene()
@@ -104,15 +109,16 @@ class ModelViewer(val engine: Engine) : android.view.View.OnTouchListener {
         view = engine.createView()
         view.scene = scene
         view.camera = camera
+        val options = renderer.clearOptions
+        options.clear = true
+        renderer.clearOptions = options
 
         assetLoader = AssetLoader(engine, MaterialProvider(engine), EntityManager.get())
         resourceLoader = ResourceLoader(engine, normalizeSkinningWeights, recomputeBoundingBoxes)
-
         // Always add a direct light source since it is required for shadowing.
         // We highly recommend adding an indirect light as well.
 
         light = EntityManager.get().create()
-
         val (r, g, b) = Colors.cct(6_500.0f)
         LightManager.Builder(LightManager.Type.DIRECTIONAL)
                 .color(r, g, b)
@@ -125,30 +131,20 @@ class ModelViewer(val engine: Engine) : android.view.View.OnTouchListener {
     }
 
     constructor(surfaceView: SurfaceView, engine: Engine = Engine.create(), manipulator: Manipulator? = null) : this(engine) {
-        cameraManipulator = manipulator ?: Manipulator.Builder()
-                .targetPosition(kDefaultObjectPosition.x, kDefaultObjectPosition.y, kDefaultObjectPosition.z)
-                .viewport(surfaceView.width, surfaceView.height)
-                .build(Manipulator.Mode.ORBIT)
-
         this.surfaceView = surfaceView
-        gestureDetector = GestureDetector(surfaceView, cameraManipulator)
         displayHelper = DisplayHelper(surfaceView.context)
         uiHelper.renderCallback = SurfaceCallback()
+        uiHelper.isOpaque = false
         uiHelper.attachTo(surfaceView)
         addDetachListener(surfaceView)
     }
 
     @Suppress("unused")
     constructor(textureView: TextureView, engine: Engine = Engine.create(), manipulator: Manipulator? = null) : this(engine) {
-        cameraManipulator = manipulator ?: Manipulator.Builder()
-                .targetPosition(kDefaultObjectPosition.x, kDefaultObjectPosition.y, kDefaultObjectPosition.z)
-                .viewport(textureView.width, textureView.height)
-                .build(Manipulator.Mode.ORBIT)
-
         this.textureView = textureView
-        gestureDetector = GestureDetector(textureView, cameraManipulator)
         displayHelper = DisplayHelper(textureView.context)
         uiHelper.renderCallback = SurfaceCallback()
+        uiHelper.isOpaque = false
         uiHelper.attachTo(textureView)
         addDetachListener(textureView)
     }
@@ -189,7 +185,7 @@ class ModelViewer(val engine: Engine) : android.view.View.OnTouchListener {
      *
      * The given callback is triggered from a worker thread for each requested resource.
      */
-    fun loadModelGltfAsync(buffer: Buffer, callback: (String) -> Buffer) {
+    fun loadModelGltfAsync(buffer: Buffer, callback: (String) -> Buffer?) {
         destroyModel()
         asset = assetLoader.createAssetFromJson(buffer)
         fetchResourcesJob = CoroutineScope(Dispatchers.IO).launch {
@@ -210,6 +206,7 @@ class ModelViewer(val engine: Engine) : android.view.View.OnTouchListener {
             val maxExtent = 2.0f * max(halfExtent)
             val scaleFactor = 2.0f / maxExtent
             center -= centerPoint / scaleFactor
+            cameraController.setModelBox(2 * halfExtent[0] * scaleFactor,2 * halfExtent[1] * scaleFactor,2 * halfExtent[2] * scaleFactor)
             val transform = scale(Float3(scaleFactor)) * translation(-center)
             tm.setTransform(tm.getInstance(asset.root), transpose(transform).toFloatArray())
         }
@@ -247,7 +244,7 @@ class ModelViewer(val engine: Engine) : android.view.View.OnTouchListener {
         asset?.let { populateScene(it) }
 
         // Extract the camera basis from the helper and push it to the Filament camera.
-        cameraManipulator.getLookAt(eyePos, target, upward)
+        cameraController.getLookAt(eyePos, target, upward)
         camera.lookAt(
                 eyePos[0], eyePos[1], eyePos[2],
                 target[0], target[1], target[2],
@@ -271,32 +268,36 @@ class ModelViewer(val engine: Engine) : android.view.View.OnTouchListener {
 
     private fun addDetachListener(view: android.view.View) {
         view.addOnAttachStateChangeListener(object : android.view.View.OnAttachStateChangeListener {
-            override fun onViewAttachedToWindow(v: android.view.View?) {}
+            override fun onViewAttachedToWindow(v: android.view.View?) {
+            }
             override fun onViewDetachedFromWindow(v: android.view.View?) {
-                uiHelper.detach()
-
-                destroyModel()
-                assetLoader.destroy()
-                resourceLoader.destroy()
-
-                engine.destroyEntity(light)
-                engine.destroyRenderer(renderer)
-                engine.destroyView(this@ModelViewer.view)
-                engine.destroyScene(scene)
-                engine.destroyCamera(camera)
-
-                EntityManager.get().destroy(light)
-
-                engine.destroy()
             }
         })
+    }
+
+    fun detachAction(){
+        uiHelper.detach()
+
+        destroyModel()
+        assetLoader.destroy()
+        resourceLoader.destroy()
+
+        engine.destroyEntity(light)
+        engine.destroyRenderer(renderer)
+        engine.destroyView(this@ModelViewer.view)
+        engine.destroyScene(scene)
+        engine.destroyCamera(camera)
+
+        EntityManager.get().destroy(light)
+
+        engine.destroy()
     }
 
     /**
      * Handles a [MotionEvent] to enable one-finger orbit, two-finger pan, and pinch-to-zoom.
      */
     fun onTouchEvent(event: MotionEvent) {
-        gestureDetector.onTouchEvent(event)
+
     }
 
     @SuppressWarnings("ClickableViewAccessibility")
@@ -305,8 +306,8 @@ class ModelViewer(val engine: Engine) : android.view.View.OnTouchListener {
         return true
     }
 
-    private suspend fun fetchResources(asset: FilamentAsset, callback: (String) -> Buffer) {
-        val items = HashMap<String, Buffer>()
+    private suspend fun fetchResources(asset: FilamentAsset, callback: (String) -> Buffer?) {
+        val items = HashMap<String, Buffer?>()
         val resourceUris = asset.resourceUris
         for (resourceUri in resourceUris) {
             items[resourceUri] = callback(resourceUri)
@@ -314,11 +315,14 @@ class ModelViewer(val engine: Engine) : android.view.View.OnTouchListener {
 
         withContext(Dispatchers.Main) {
             for ((uri, buffer) in items) {
-                resourceLoader.addResourceData(uri, buffer)
+                buffer?.let {
+                    resourceLoader.addResourceData(uri, buffer)
+                }
             }
             resourceLoader.asyncBeginLoad(asset)
             animator = asset.animator
             asset.releaseSourceData()
+            loadingStatusListener?.onLoadingDone()
         }
     }
 
@@ -342,9 +346,17 @@ class ModelViewer(val engine: Engine) : android.view.View.OnTouchListener {
         override fun onResized(width: Int, height: Int) {
             view.viewport = Viewport(0, 0, width, height)
             val aspect = width.toDouble() / height.toDouble()
-            camera.setProjection(kFovDegrees, aspect, kNearPlane, kFarPlane, Camera.Fov.VERTICAL)
-            cameraManipulator.setViewport(width, height)
+            camera.setProjection(kFovDegrees, aspect, kNearPlane, kFarPlane, kCameraFovDirection)
+            cameraController.setCameraHomePosition(aspect, kFovDegrees, kCameraFovDirection, kModelRatio, kHeadRatio)
         }
+    }
+
+    fun addLoadingStatusListener(listener: ResourceLoadingStatusListener){
+        loadingStatusListener = listener
+    }
+
+    interface ResourceLoadingStatusListener{
+        fun onLoadingDone()
     }
 
     companion object {
