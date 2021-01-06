@@ -62,7 +62,7 @@ fun loadTextureFromDiskByFile(engine: Engine, textureFile: File, type: TextureTy
 
         texture.setImage(engine, 0, descriptor)
         texture.generateMipmaps(engine)
-
+        textureBitmap.recycle()
         return texture
     }
     return null
@@ -98,7 +98,7 @@ fun loadTextureFromDiskByURL(engine: Engine, imagePath: String, type: TextureTyp
 
         texture.setImage(engine, 0, descriptor)
         texture.generateMipmaps(engine)
-
+        textureBitmap.recycle()
         return texture
     }
     return null
@@ -139,7 +139,7 @@ fun loadTexture(engine: Engine, resources: Resources, resourceId: Int, type: Tex
     }
 
     texture.generateMipmaps(engine)
-
+    bitmap.recycle()
     return texture
 }
 
