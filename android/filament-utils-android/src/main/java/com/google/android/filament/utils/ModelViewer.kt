@@ -188,8 +188,18 @@ class ModelViewer(val engine: Engine) : android.view.View.OnTouchListener {
     fun loadModelGltfAsync(buffer: Buffer, callback: (String) -> Buffer?) {
         destroyModel()
         asset = assetLoader.createAssetFromJson(buffer)
-        fetchResourcesJob = CoroutineScope(Dispatchers.IO).launch {
-            fetchResources(asset!!, callback)
+        asset?.let { asset ->
+            fetchResourcesJob = CoroutineScope(Dispatchers.IO).launch {
+                try {
+                    fetchResources(asset, callback)
+                } catch (e: Exception) {
+                    withContext(Dispatchers.Main) {
+                        loadingStatusListener?.onLoadingFail(e)
+                    }
+                }
+            }
+        } ?: run {
+            loadingStatusListener?.onLoadingFail(NullPointerException("get null asset from createAssetFromJson"))
         }
     }
 
@@ -357,6 +367,7 @@ class ModelViewer(val engine: Engine) : android.view.View.OnTouchListener {
 
     interface ResourceLoadingStatusListener{
         fun onLoadingDone()
+        fun onLoadingFail(error: Exception)
     }
 
     companion object {
