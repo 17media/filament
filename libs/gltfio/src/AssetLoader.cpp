@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+#include <gltfio/Animator.h>
 #include <gltfio/AssetLoader.h>
 #include <gltfio/MaterialProvider.h>
 
@@ -23,6 +24,7 @@
 #include <filament/Box.h>
 #include <filament/Camera.h>
 #include <filament/Engine.h>
+#include <filament/Exposure.h>
 #include <filament/IndexBuffer.h>
 #include <filament/LightManager.h>
 #include <filament/Material.h>
@@ -57,6 +59,8 @@ using namespace filament::math;
 using namespace utils;
 
 namespace gltfio {
+
+void importSkins(const cgltf_data* gltf, const NodeMap& nodeMap, SkinVector& dstSkins);
 
 static const auto FREE_CALLBACK = [](void* mem, size_t, void*) { free(mem); };
 
@@ -123,7 +127,7 @@ struct FAssetLoader : public AssetLoader {
     }
 
     void createAsset(const cgltf_data* srcAsset, size_t numInstances);
-    FilamentInstance* createInstance(FFilamentAsset* primary, const cgltf_scene* scene);
+    FFilamentInstance* createInstance(FFilamentAsset* primary, const cgltf_scene* scene);
     void createEntity(const cgltf_node* node, Entity parent, bool enableLight,
             FFilamentInstance* instance);
     void createRenderable(const cgltf_node* node, Entity entity, const char* name);
@@ -234,7 +238,15 @@ FilamentInstance* FAssetLoader::createInstance(FFilamentAsset* primary) {
         slog.e << "There is no scene in the asset." << io::endl;
         return nullptr;
     }
-    FilamentInstance* instance = createInstance(primary, scene);
+    FFilamentInstance* instance = createInstance(primary, scene);
+
+    // Import the skin data. This is normally done by ResourceLoader but dynamically created
+    // instances are a bit special.
+    importSkins(primary->mSourceAsset->hierarchy, instance->nodeMap, instance->skins);
+    if (primary->mAnimator) {
+        primary->mAnimator->addInstance(instance);
+    }
+
     primary->mDependencyGraph.refinalize();
     return instance;
 }
@@ -308,7 +320,7 @@ void FAssetLoader::createAsset(const cgltf_data* srcAsset, size_t numInstances) 
     }
 }
 
-FilamentInstance* FAssetLoader::createInstance(FFilamentAsset* primary, const cgltf_scene* scene) {
+FFilamentInstance* FAssetLoader::createInstance(FFilamentAsset* primary, const cgltf_scene* scene) {
     auto rootTransform = mTransformManager.getInstance(primary->mRoot);
     Entity instanceRoot = mEntityManager.create();
     mTransformManager.create(instanceRoot, rootTransform);
@@ -966,12 +978,17 @@ MaterialInstance* FAssetLoader::createMaterialInstance(const cgltf_material* inp
 
     mResult->mMaterialInstances.push_back(mi);
 
-    if (inputMat->alpha_mode == cgltf_alpha_mode_mask) {
+    // Check the material blending mode, not the cgltf blending mode, because the provider
+    // might have selected an alternative blend mode (e.g. to support transmission).
+    if (mi->getMaterial()->getBlendingMode() == filament::BlendingMode::MASKED) {
         mi->setMaskThreshold(inputMat->alpha_cutoff);
     }
 
     const float* e = inputMat->emissive_factor;
-    mi->setParameter("emissiveFactor", float3(e[0], e[1], e[2]));
+    // To force emissive to bloom when emissiveFactor is at 1, we multiply by a luminance
+    // of 6EV. At 6EV, the luminance will be 2^(6-3) = 8 which is about the HDR range of
+    // our default tone mappers.
+    mi->setParameter("emissiveFactor", float3(e[0], e[1], e[2]) * Exposure::luminance(6.0f));
 
     const float* c = mrConfig.base_color_factor;
     mi->setParameter("baseColorFactor", float4(c[0], c[1], c[2], c[3]));

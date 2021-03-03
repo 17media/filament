@@ -125,7 +125,7 @@ public:
 
     // VSM shadow mipmap pass
     FrameGraphId<FrameGraphTexture> vsmMipmapPass(FrameGraph& fg,
-            FrameGraphId<FrameGraphTexture> input, uint8_t layer, size_t level) noexcept;
+            FrameGraphId<FrameGraphTexture> input, uint8_t layer, size_t level, bool finalize) noexcept;
 
     backend::Handle<backend::HwTexture> getOneTexture() const { return mDummyOneTexture; }
     backend::Handle<backend::HwTexture> getZeroTexture() const { return mDummyZeroTexture; }
@@ -140,7 +140,7 @@ private:
     class PostProcessMaterial;
 
     FrameGraphId<FrameGraphTexture> mipmapPass(FrameGraph& fg,
-            FrameGraphId<FrameGraphTexture> input, size_t level) noexcept;
+            FrameGraphId<FrameGraphTexture> input, size_t level, bool finalize) noexcept;
 
     struct BilateralPassConfig {
         uint8_t kernelSize = 11;
@@ -159,6 +159,10 @@ private:
             bool reinhard, size_t kernelWidth, float sigma = 6.0f) noexcept;
 
     FrameGraphId<FrameGraphTexture> bloomPass(FrameGraph& fg,
+            FrameGraphId<FrameGraphTexture> input, backend::TextureFormat outFormat,
+            View::BloomOptions& bloomOptions, math::float2 scale) noexcept;
+
+    FrameGraphId<FrameGraphTexture> bloomPassPingPong(FrameGraph& fg,
             FrameGraphId<FrameGraphTexture> input, backend::TextureFormat outFormat,
             View::BloomOptions& bloomOptions, math::float2 scale) noexcept;
 
@@ -221,6 +225,7 @@ private:
     std::uniform_real_distribution<float> mUniformDistribution{0.0f, 1.0f};
 
     const math::float2 mHaltonSamples[16];
+    bool mDisableFeedbackLoops;
 };
 
 
