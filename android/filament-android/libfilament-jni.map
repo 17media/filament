@@ -3,16 +3,19 @@ LIBFILAMENT {
     Java_com_google_android_filament_*;
     JNI*;
     *filament*Camera*;
+    *filament*Exposure*;
     *filament*Skybox*;
     *filament*Engine*;
     *filament*RenderableManager*;
     *filament*Aabb*;
     *filament*IndirectLight*;
     *filament*LightManager*;
+    *filament*Renderer*;
     *filament*Transform*;
     *filament*Material*;
     *filament*IndexBuffer*;
     *filament*VertexBuffer*;
+    *filament*View*;
     *filament*Texture*;
     *filament*geometry*;
 

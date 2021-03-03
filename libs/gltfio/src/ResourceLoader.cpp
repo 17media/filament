@@ -131,7 +131,7 @@ static void uploadCallback(void* buffer, size_t size, void* user) {
     delete event;
 }
 
-static void importSkins(const cgltf_data* gltf, const NodeMap& nodeMap, SkinVector& dstSkins) {
+void importSkins(const cgltf_data* gltf, const NodeMap& nodeMap, SkinVector& dstSkins) {
     dstSkins.resize(gltf->skins_count);
     for (cgltf_size i = 0, len = gltf->nodes_count; i < len; ++i) {
         const cgltf_node& node = gltf->nodes[i];
@@ -169,6 +169,10 @@ static void importSkins(const cgltf_data* gltf, const NodeMap& nodeMap, SkinVect
         if (srcMatrices) {
             auto dstMatrices = (uint8_t*) dstSkin.inverseBindMatrices.data();
             uint8_t* bytes = (uint8_t*) srcMatrices->buffer_view->buffer->data;
+            if (!bytes) {
+                slog.w << "Empty animation buffer, have resources been loaded yet?" << io::endl;
+                continue;
+            }
             auto srcBuffer = (void*) (bytes + srcMatrices->offset + srcMatrices->buffer_view->offset);
             memcpy(dstMatrices, srcBuffer, srcSkin.joints_count * sizeof(mat4f));
         }
@@ -365,6 +369,8 @@ bool ResourceLoader::loadResources(FFilamentAsset* asset, bool async) {
         if (!asset->isInstanced()) {
             importSkins(gltf, asset->mNodeMap, asset->mSkins);
         } else {
+            // NOTE: This takes care of up-front instances, but dynamically added instances also
+            // need to import the skin data, which is done in AssetLoader.
             for (FFilamentInstance* instance : asset->mInstances) {
                 importSkins(gltf, instance->nodeMap, instance->skins);
             }
@@ -681,11 +687,15 @@ bool ResourceLoader::Impl::createTextures(bool async) {
 
     JobSystem::Job* parent = js->createJob();
 
+    // Create a copy of the shared_ptr to the source data to prevent it from being freed during
+    // the texture decoding process.
+    FFilamentAsset::SourceHandle retainSourceAsset = asset->mSourceAsset;
+
     // Kick off jobs that decode texels from buffer pointers.
     for (auto& pair : mBufferTextureCache) {
         const uint8_t* sourceData = (const uint8_t*) pair.first;
         TextureCacheEntry* entry = pair.second.get();
-        JobSystem::Job* decode = jobs::createJob(*js, parent, [=] {
+        JobSystem::Job* decode = jobs::createJob(*js, parent, [retainSourceAsset, entry, sourceData] {
             int width, height, comp;
             entry->texels = stbi_load_from_memory(sourceData, entry->bufferSize,
                     &width, &height, &comp, 4);
@@ -702,7 +712,7 @@ bool ResourceLoader::Impl::createTextures(bool async) {
         auto iter = mUriDataCache.find(uri);
         if (iter != mUriDataCache.end()) {
             const uint8_t* sourceData = (const uint8_t*) iter->second.buffer;
-            JobSystem::Job* decode = jobs::createJob(*js, parent, [=] {
+            JobSystem::Job* decode = jobs::createJob(*js, parent, [retainSourceAsset, entry, sourceData, iter] {
                 int width, height, comp;
                 entry->texels = stbi_load_from_memory(sourceData, iter->second.size, &width,
                         &height, &comp, 4);
@@ -717,7 +727,7 @@ bool ResourceLoader::Impl::createTextures(bool async) {
             return false;
         #else
             Path fullpath = Path(mGltfPath).getParent() + uri;
-            JobSystem::Job* decode = jobs::createJob(*js, parent, [=] {
+            JobSystem::Job* decode = jobs::createJob(*js, parent, [retainSourceAsset, entry, fullpath] {
                 int width, height, comp;
                 entry->texels = stbi_load(fullpath.c_str(), &width, &height, &comp, 4);
             });

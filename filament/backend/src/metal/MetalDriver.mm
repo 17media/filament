@@ -46,7 +46,7 @@ namespace metal {
 
 UTILS_NOINLINE
 Driver* MetalDriver::create(MetalPlatform* const platform) {
-    assert(platform);
+    assert_invariant(platform);
     return new MetalDriver(platform);
 }
 
@@ -138,6 +138,8 @@ void MetalDriver::endFrame(uint32_t frameId) {
     mContext->currentDrawSwapChain->releaseDrawable();
 
     CVMetalTextureCacheFlush(mContext->textureCache, 0);
+
+    assert_invariant(mContext->groupMarkers.empty());
 }
 
 void MetalDriver::flush(int) {
@@ -615,6 +617,10 @@ bool MetalDriver::isFrameTimeSupported() {
     return false;
 }
 
+bool MetalDriver::areFeedbackLoopsSupported() {
+    return true;
+}
+
 math::float2 MetalDriver::getClipSpaceParams() {
     // z-coordinate of clip-space is in [0,w]
     return math::float2{ -0.5f, 0.5f };
@@ -622,7 +628,7 @@ math::float2 MetalDriver::getClipSpaceParams() {
 
 void MetalDriver::updateVertexBuffer(Handle<HwVertexBuffer> vbh, size_t index,
         BufferDescriptor&& data, uint32_t byteOffset) {
-    assert(byteOffset == 0);    // TODO: handle byteOffset for vertex buffers
+    assert_invariant(byteOffset == 0);    // TODO: handle byteOffset for vertex buffers
     auto* vb = handle_cast<MetalVertexBuffer>(mHandleMap, vbh);
     vb->buffers[index]->copyIntoBuffer(data.buffer, data.size);
     scheduleDestroy(std::move(data));
@@ -630,7 +636,7 @@ void MetalDriver::updateVertexBuffer(Handle<HwVertexBuffer> vbh, size_t index,
 
 void MetalDriver::updateIndexBuffer(Handle<HwIndexBuffer> ibh, BufferDescriptor&& data,
         uint32_t byteOffset) {
-    assert(byteOffset == 0);    // TODO: handle byteOffset for index buffers
+    assert_invariant(byteOffset == 0);    // TODO: handle byteOffset for index buffers
     auto* ib = handle_cast<MetalIndexBuffer>(mHandleMap, ibh);
     ib->buffer.copyIntoBuffer(data.buffer, data.size);
     scheduleDestroy(std::move(data));
@@ -643,6 +649,9 @@ void MetalDriver::update2DImage(Handle<HwTexture> th, uint32_t level, uint32_t x
     auto tex = handle_cast<MetalTexture>(mHandleMap, th);
     tex->load2DImage(level, xoffset, yoffset, width, height, data);
     scheduleDestroy(std::move(data));
+}
+
+void MetalDriver::setMinMaxLevels(Handle<HwTexture> th, uint32_t minLevel, uint32_t maxLevel) {
 }
 
 void MetalDriver::update3DImage(Handle<HwTexture> th, uint32_t level,
@@ -752,9 +761,11 @@ void MetalDriver::beginRenderPass(Handle<HwRenderTarget> rth,
 
     mContext->currentRenderPassEncoder =
             [getPendingCommandBuffer(mContext) renderCommandEncoderWithDescriptor:descriptor];
-
-    // Filament's default winding is counter clockwise.
-    [mContext->currentRenderPassEncoder setFrontFacingWinding:MTLWindingCounterClockwise];
+    if (!mContext->groupMarkers.empty()) {
+        mContext->currentRenderPassEncoder.label =
+                [NSString stringWithCString:mContext->groupMarkers.top()
+                                   encoding:NSUTF8StringEncoding];
+    }
 
     // Flip the viewport, because Metal's screen space is vertically flipped that of Filament's.
     NSInteger renderTargetHeight =
@@ -777,6 +788,7 @@ void MetalDriver::beginRenderPass(Handle<HwRenderTarget> rth,
     mContext->pipelineState.invalidate();
     mContext->depthStencilState.invalidate();
     mContext->cullModeState.invalidate();
+    mContext->windingState.invalidate();
 }
 
 void MetalDriver::nextSubpass(int dummy) {}
@@ -853,11 +865,12 @@ void MetalDriver::insertEventMarker(const char* string, size_t len) {
 }
 
 void MetalDriver::pushGroupMarker(const char* string, size_t len) {
-
+    mContext->groupMarkers.push(string);
 }
 
 void MetalDriver::popGroupMarker(int dummy) {
-
+    assert_invariant(!mContext->groupMarkers.empty());
+    mContext->groupMarkers.pop();
 }
 
 void MetalDriver::startCapture(int) {
@@ -1130,7 +1143,7 @@ void MetalDriver::draw(backend::PipelineState ps, Handle<HwRenderPrimitive> rph)
     if (mContext->pipelineState.stateChanged()) {
         id<MTLRenderPipelineState> pipeline =
                 mContext->pipelineStateCache.getOrCreateState(pipelineState);
-        assert(pipeline != nil);
+        assert_invariant(pipeline != nil);
         [mContext->currentRenderPassEncoder setRenderPipelineState:pipeline];
     }
 
@@ -1139,6 +1152,13 @@ void MetalDriver::draw(backend::PipelineState ps, Handle<HwRenderPrimitive> rph)
     mContext->cullModeState.updateState(cullMode);
     if (mContext->cullModeState.stateChanged()) {
         [mContext->currentRenderPassEncoder setCullMode:cullMode];
+    }
+
+    // Front face winding
+    MTLWinding winding = rs.inverseFrontFaces ? MTLWindingClockwise : MTLWindingCounterClockwise;
+    mContext->windingState.updateState(winding);
+    if (mContext->windingState.stateChanged()) {
+        [mContext->currentRenderPassEncoder setFrontFacingWinding:winding];
     }
 
     // Set the depth-stencil state, if a state change is needed.
@@ -1150,7 +1170,7 @@ void MetalDriver::draw(backend::PipelineState ps, Handle<HwRenderPrimitive> rph)
     if (mContext->depthStencilState.stateChanged()) {
         id<MTLDepthStencilState> state =
                 mContext->depthStencilStateCache.getOrCreateState(depthState);
-        assert(state != nil);
+        assert_invariant(state != nil);
         [mContext->currentRenderPassEncoder setDepthStencilState:state];
     }
 
@@ -1284,7 +1304,7 @@ void MetalDriver::enumerateSamplerGroups(
             continue;
         }
         SamplerGroup* sb = metalSamplerGroup->sb.get();
-        assert(sb->getSize() == samplerGroup.size());
+        assert_invariant(sb->getSize() == samplerGroup.size());
         size_t samplerIdx = 0;
         for (const auto& sampler : samplerGroup) {
             size_t bindingPoint = sampler.binding;
