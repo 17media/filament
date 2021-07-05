@@ -268,11 +268,11 @@ class ModelViewer(val engine: Engine) : android.view.View.OnTouchListener {
     }
 
     private fun populateScene(asset: FilamentAsset) {
-        var count = 0
-        val popRenderables = {count = asset.popRenderables(readyRenderables); count != 0}
-        while (popRenderables()) {
-            scene.addEntities(readyRenderables.take(count).toIntArray())
-        }
+//        var count = 0
+//        val popRenderables = {count = asset.popRenderables(readyRenderables); count != 0}
+//        while (popRenderables()) {
+//            scene.addEntities(readyRenderables.take(count).toIntArray())
+//        }
         scene.addEntities(asset.lightEntities)
     }
 
