@@ -223,3 +223,31 @@ Java_com_google_android_filament_gltfio_FilamentAsset_nReleaseSourceData(JNIEnv*
     FilamentAsset* asset = (FilamentAsset*) nativeAsset;
     asset->releaseSourceData();
 }
+
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_google_android_filament_gltfio_FilamentAsset_nGetResourceUri(JNIEnv* env, jclass,
+                                                                              jlong nativeAsset,
+                                                                              jint index) {
+    FilamentAsset* asset = (FilamentAsset*) nativeAsset;
+    int n_index = (int)index;
+    if (n_index>=0 && n_index< asset->getResourceUriCount()) {
+        auto resourceUris = asset->getResourceUris();
+        return env->NewStringUTF(resourceUris[n_index]);
+    }
+    return nullptr;
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_google_android_filament_gltfio_FilamentAsset_nGetResourceUrisBySize(JNIEnv* env, jclass,
+                                                                       jlong nativeAsset,
+                                                                       jobjectArray result,
+                                                                       jint index, jint size) {
+    FilamentAsset* asset = (FilamentAsset*) nativeAsset;
+    auto resourceUris = asset->getResourceUris();
+    int n_index = (int)index;
+    int n_size = (int)size;
+    for (int i = n_index, j = 0; i < asset->getResourceUriCount() && j < n_size; ++i,++j) {
+        env->SetObjectArrayElement(result, (jsize) i, env->NewStringUTF(resourceUris[i]));
+    }
+}

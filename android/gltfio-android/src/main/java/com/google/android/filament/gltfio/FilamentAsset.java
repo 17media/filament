@@ -209,8 +209,15 @@ public class FilamentAsset {
      * Gets resource URIs for all externally-referenced buffers.
      */
     public @NonNull String[] getResourceUris() {
-        String[] uris = new String[nGetResourceUriCount(mNativeObject)];
-        nGetResourceUris(mNativeObject, uris);
+        int count = nGetResourceUriCount(mNativeObject);
+        String[] uris = new String[count];
+        int MAX_SIZE = 200;
+        for (int i = 0; i < count; ) {
+            int size = count - i;
+            if (size > MAX_SIZE) size = MAX_SIZE;
+            nGetResourceUrisBySize(mNativeObject, uris, i, size);
+            i += size;
+        }
         return uris;
     }
 
@@ -256,4 +263,7 @@ public class FilamentAsset {
     private static native int nGetResourceUriCount(long nativeAsset);
     private static native void nGetResourceUris(long nativeAsset, String[] result);
     private static native void nReleaseSourceData(long nativeAsset);
+
+    private static native String nGetResourceUri(long nativeAsset, int index);
+    private static native void nGetResourceUrisBySize(long nativeAsset, String[] result, int index, int size);
 }
